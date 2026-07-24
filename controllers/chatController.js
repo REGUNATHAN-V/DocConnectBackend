@@ -1,15 +1,7 @@
-// controllers/chatController.js
-//
-// Backs the two REST endpoints ChatDetailScreen / ChatListScreen actually
-// call: GET /chat/history and GET /chat/conversations. These didn't exist
-// yet in your project — that's why the front end was getting 404s and
-// ChatListScreen showed nothing even after messages were sent.
-
 const Chat = require("../models/Chat");
 const DeletedMessage = require("../models/DeletedMessage");
 const User = require("../models/User");
 
-// ── Small in-file preview builder — mirrors the front end's previewFor() ───
 function buildPreview(msg) {
   if (msg.deletedForEveryone) return "🚫 This message was deleted";
   switch (msg.messageType) {
@@ -24,18 +16,7 @@ function buildPreview(msg) {
   }
 }
 
-// ─────────────────────────────────────────
-// GET /chat/history?with=<otherCode>&page=&limit=
-//
-// Returns this viewer's private conversation with `with`, oldest-first
-// within the page. Page 1 = most recent `limit` messages; higher pages =
-// further back in time (matches the RTK Query `merge` in apiSlice, which
-// prepends later pages as "older" messages).
-//
-// Excludes messages the viewer deleted "for me" (DeletedMessage rows with
-// deleteType:"for_me", deletedBy:viewer) — those stay visible to the other
-// party but disappear from the viewer's own history.
-// ─────────────────────────────────────────
+
 exports.getChatHistory = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -63,8 +44,6 @@ exports.getChatHistory = async (req, res) => {
 
     const total = await Chat.countDocuments(query);
 
-    // Fetch newest-first so `skip` walks backwards in time page over page,
-    // then reverse each page to ascending (oldest-first) before returning.
     const docs = await Chat.find(query)
       .sort({ timestamp: -1 })
       .skip(skip)
@@ -85,21 +64,7 @@ exports.getChatHistory = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// GET /chat/conversations
-//
-// One row per person the viewer has exchanged private messages with:
-// last message preview, its timestamp, and an unread count. Powers
-// ChatListScreen. A contact only appears here AFTER at least one Chat
-// document exists between the two users — sending the very first message
-// is what creates that document, so a brand-new chat (nothing sent yet)
-// won't show up until either side actually sends something. That's also
-// why tapping "Message" from Discover feels like it "doesn't persist": it
-// only opens ChatDetailScreen, it doesn't create a conversation by itself —
-// the conversation is created implicitly the moment the first
-// private_message/private_voice/etc is sent over the socket and saved to
-// the Chat collection.
-// ─────────────────────────────────────────
+
 exports.getConversations = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -110,10 +75,7 @@ exports.getConversations = async (req, res) => {
     }).distinct("messageId");
     const deletedSet = new Set(deletedForMeIds.map(String));
 
-    // Cap at a few thousand for now — fine for typical private-chat volume.
-    // If this ever needs to scale much further, switch to a Mongo
-    // aggregation pipeline ($group by "other side" with $first on a
-    // timestamp-sorted stream) instead of pulling raw docs into Node.
+ 
     const messages = await Chat.find({
       $or: [{ sender: userId }, { receiver: userId }],
     })

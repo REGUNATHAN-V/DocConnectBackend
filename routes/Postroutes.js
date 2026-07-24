@@ -5,6 +5,7 @@ const {
   getFeed,
   toggleLike,
   deletePost,
+  incrementShareCount,
 } = require("../controllers/Postcontroller");
 const authMiddleware = require("../middlleware/authmiddleware");
 const upload = require("../middlleware/upload");
@@ -16,5 +17,6 @@ router.get("/feed", authMiddleware, getFeed);
 router.post("/create", authMiddleware, upload.array("images", 6), createPost);
 router.post("/:postId/like", authMiddleware, toggleLike);
 router.delete("/:postId", authMiddleware, deletePost);
+router.post("/:postId/share", authMiddleware, incrementShareCount);
 
 module.exports = router;

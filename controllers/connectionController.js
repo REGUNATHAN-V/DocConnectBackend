@@ -3,7 +3,6 @@ const Connection = require("../models/Connection");
 const User = require("../models/User");
 const { broadcastAll } = require("../socket/broadcast");
 
-// Returns the Set of userIds that `userId` has an ACCEPTED connection with.
 async function getConnectedIds(userId) {
   const docs = await Connection.find({
     status: "accepted",
@@ -18,48 +17,31 @@ function toPublicUser(userDoc) {
     name: userDoc.name,
     role: userDoc.role,
     profilePic: userDoc.profilePic,
+    connectsCount: userDoc.connectsCount,
   };
 }
 
-// Attaches, relative to `viewerUserId`, to each user in `candidates`:
-//   connectionStatus: "none" | "pending_sent" | "pending_received" | "connected"
-//   connectionId:     the Connection doc id, if one exists
-//   connectsCount:    mutual accepted connections between viewer & candidate
-//
-// NOTE: this does one query per candidate to compute mutual counts. Fine for
-// page sizes of 10-20 (typical discover/search pages); if you ever raise the
-// page size a lot, this is the first thing to optimize (e.g. an aggregation
-// pipeline instead of N queries).
 async function attachConnectionInfo(candidates, viewerUserId) {
   if (!viewerUserId || candidates.length === 0) {
-    return candidates.map((u) => ({
-      ...u,
-      connectionStatus: "none",
-      connectionId: null,
-      connectsCount: 0,
-    }));
+    return candidates.map((u) => ({ ...u, connectionStatus: "none", connectionId: null }));
   }
-
+ 
   const candidateIds = candidates.map((u) => u.userId);
-
-  const [viewerConnectedIds, relevantDocs, candidateConnectedSets] = await Promise.all([
-    getConnectedIds(viewerUserId),
-    Connection.find({
-      $or: [
-        { requester: viewerUserId, recipient: { $in: candidateIds } },
-        { requester: { $in: candidateIds }, recipient: viewerUserId },
-      ],
-    }),
-    Promise.all(candidates.map((u) => getConnectedIds(u.userId))),
-  ]);
-
+ 
+  const relevantDocs = await Connection.find({
+    $or: [
+      { requester: viewerUserId, recipient: { $in: candidateIds } },
+      { requester: { $in: candidateIds }, recipient: viewerUserId },
+    ],
+  });
+ 
   const docByCandidate = new Map();
   relevantDocs.forEach((d) => {
     const otherId = d.requester === viewerUserId ? d.recipient : d.requester;
     docByCandidate.set(otherId, d);
   });
-
-  return candidates.map((u, i) => {
+ 
+  return candidates.map((u) => {
     const doc = docByCandidate.get(u.userId);
     let connectionStatus = "none";
     if (doc) {
@@ -68,20 +50,11 @@ async function attachConnectionInfo(candidates, viewerUserId) {
         connectionStatus = doc.requester === viewerUserId ? "pending_sent" : "pending_received";
       }
     }
-
-    let connectsCount = 0;
-    for (const id of candidateConnectedSets[i]) {
-      if (viewerConnectedIds.has(id)) connectsCount++;
-    }
-
-    return { ...u, connectionStatus, connectionId: doc?.connectionId ?? null, connectsCount };
+    return { ...u, connectionStatus, connectionId: doc?.connectionId ?? null };
   });
 }
 
-// ─────────────────────────────────────────
-// "People you may know" — GET /connections/discover?page=&limit=
-// Excludes self and anyone already connected/pending with the viewer.
-// ─────────────────────────────────────────
+
 exports.getDiscoverUsers = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -97,13 +70,6 @@ exports.getDiscoverUsers = async (req, res) => {
       ...existingDocs.map((d) => (d.requester === userId ? d.recipient : d.requester)),
     ]);
 
-    // Fetch one extra record beyond `limit` to know whether a next page
-    // exists, instead of a separate countDocuments() call. If we get back
-    // limit+1 rows, there's more; we then trim to `limit` before responding.
-    // const users = await User.find({ userId: { $nin: [...excludeIds] } })
-    //   .sort({ createdAt: -1 })
-    //   .skip(skip)
-    //   .limit(limit + 1);
 
     const users = await User.find({
       userId: { $ne: userId },
@@ -129,9 +95,7 @@ exports.getDiscoverUsers = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// Search — GET /connections/search?q=&page=&limit=
-// ─────────────────────────────────────────
+
 exports.searchUsers = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -250,10 +214,6 @@ exports.searchMyConnections = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// My accepted connections — GET /connections?page=&limit=
-// (the "Connected accounts" screen)
-// ─────────────────────────────────────────
 exports.getMyConnections = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -299,10 +259,7 @@ exports.getMyConnections = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// Requests waiting on YOU to respond — GET /connections/requests?page=&limit=
-// (pending connection requests where you're the recipient)
-// ─────────────────────────────────────────
+
 exports.getPendingRequests = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -344,10 +301,7 @@ exports.getPendingRequests = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// Send a connect request — POST /connections/request
-// Body: { toUserId }
-// ─────────────────────────────────────────
+
 exports.sendConnectRequest = async (req, res) => {
   try {
     const { userId } = req.user;
@@ -431,16 +385,13 @@ exports.sendConnectRequest = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// Accept / decline a pending request — POST /connections/:connectionId/respond
-// Body: { accept: boolean }
-// ─────────────────────────────────────────
+
 exports.respondToConnectRequest = async (req, res) => {
   try {
     const { userId } = req.user;
     const { connectionId } = req.params;
     const { accept } = req.body;
-
+ 
     const connection = await Connection.findOne({ connectionId });
     if (!connection) {
       return res.status(404).json({ success: false, message: "Request not found" });
@@ -451,10 +402,17 @@ exports.respondToConnectRequest = async (req, res) => {
     if (connection.status !== "pending") {
       return res.status(400).json({ success: false, message: "Request already handled" });
     }
-
+ 
     connection.status = accept ? "accepted" : "declined";
     await connection.save();
-
+ 
+    if (accept) {
+      await Promise.all([
+        User.updateOne({ userId: connection.requester }, { $inc: { connectsCount: 1 } }),
+        User.updateOne({ userId: connection.recipient }, { $inc: { connectsCount: 1 } }),
+      ]);
+    }
+ 
     broadcastAll({
       type: "connection_response",
       connectionId,
@@ -462,7 +420,7 @@ exports.respondToConnectRequest = async (req, res) => {
       by: userId,
       requester: connection.requester,
     });
-
+ 
     res.status(200).json({
       success: true,
       message: accept ? "Connection accepted" : "Connection declined",
@@ -474,14 +432,11 @@ exports.respondToConnectRequest = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────
-// Remove a connection or cancel a pending request — DELETE /connections/:connectionId
-// ─────────────────────────────────────────
 exports.removeConnection = async (req, res) => {
   try {
     const { userId } = req.user;
     const { connectionId } = req.params;
-
+ 
     const connection = await Connection.findOne({ connectionId });
     if (!connection) {
       return res.status(404).json({ success: false, message: "Connection not found" });
@@ -489,9 +444,24 @@ exports.removeConnection = async (req, res) => {
     if (connection.requester !== userId && connection.recipient !== userId) {
       return res.status(403).json({ success: false, message: "Not part of this connection" });
     }
-
+ 
+    const wasAccepted = connection.status === "accepted";
+ 
     await connection.deleteOne();
-
+ 
+    if (wasAccepted) {
+      await Promise.all([
+        User.updateOne(
+          { userId: connection.requester, connectsCount: { $gt: 0 } },
+          { $inc: { connectsCount: -1 } }
+        ),
+        User.updateOne(
+          { userId: connection.recipient, connectsCount: { $gt: 0 } },
+          { $inc: { connectsCount: -1 } }
+        ),
+      ]);
+    }
+ 
     res.status(200).json({ success: true, message: "Connection removed" });
   } catch (error) {
     console.error("removeConnection error:", error);

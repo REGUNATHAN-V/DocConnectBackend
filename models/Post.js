@@ -40,6 +40,11 @@ const postSchema = new mongoose.Schema(
       default: [],
     },
 
+      sharedBy: {         
+    type: [String],   
+    default: [],
+  },
+
     sharesCount: {
       type: Number,
       default: 0,

@@ -17,6 +17,11 @@ const userSchema = new mongoose.Schema(
       // match: [/^\+91[6-9]\d{9}$/, "Invalid Indian phone number"],
     },
 
+    connectsCount: {        
+      type: Number,
+      default: 0,
+    },
+
     countryCode:{
       type: String,
       default: "+91"
